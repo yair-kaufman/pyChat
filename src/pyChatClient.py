@@ -6,7 +6,6 @@ import socket
 
 MAX_BUFF = 1024
 
-
 class chatbox_client(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -15,7 +14,7 @@ class chatbox_client(ctk.CTk):
         self.login_frame = login_frame(self, self.login_callback)
         self.login_frame.show()
         self.chat_frame = chat_frame(self, self.send_message_callback)
-        self.client = client(self.receive_message_callback)
+        self.client = client(self.receive_message_callback, self.disconnect_callback)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
     def login_callback(self):
@@ -31,19 +30,25 @@ class chatbox_client(ctk.CTk):
         self.client.send_message(message)
         self.chat_frame.write_my_message(message)
 
-
     def receive_message_callback(self, message):
         self.chat_frame.write_other_message(message)
 
+    def disconnect_callback(self):
+        print("disconnect_callback")
+        self.chat_frame.hide()
+        self.login_frame.show()
+
     def close(self):
         self.client.disconnect()
+        #self.chat_frame.hide()
+        #self.login_frame.show()
         self.quit()
 
-class chat_frame(ctk.CTkFrame):
 
+class chat_frame(ctk.CTkFrame):
     def __init__(self, app, command):
         super().__init__(app)
-        self.message_entry = ctk.CTkEntry(master=self, placeholder_text="HELLO")
+        self.message_entry = ctk.CTkEntry(master=self)
         self.scrollable_frame = messages_frame(self)
         self.send = ctk.CTkButton(master=self, text="send", command=self.handle_button)
         self.command = command
@@ -87,21 +92,24 @@ class messages_frame(ctk.CTkScrollableFrame):
         message.grid(row=self.counter, column=0, padx=20, pady=5, sticky="w")
         self.counter = self.counter + 1
 
-
     def other_messages(self, text):
         message = ctk.CTkLabel(master=self, text=text, fg_color='gray', corner_radius=10)
         message.grid(row=self.counter, column=0, padx=20, pady=5, sticky='e')
         self.counter = self.counter + 1
 
 
-
 class client:
 
-    def __init__(self, command, host="localhost", port=5555, nickname="chatbot"):
+    def __init__(self, recv_callback, disconnect_callback,
+                 host="localhost", port=5555, nickname="chatbot"):
+
         self.set(host, port, nickname)
         self.socket = socket.socket()
-        self.recv_callback = command
+        self.recv_callback = recv_callback
+        self.disconnect_callback = disconnect_callback
         self.handle_thread = None
+        self.event = threading.Event()
+
 
     def set(self, host, port, nickname):
         self.host = host
@@ -115,18 +123,23 @@ class client:
         self.handle_thread.start()
 
     def handle_connection(self):
-        self.socket.connect((self.host, self.port))
-        recv = self.socket.recv(MAX_BUFF).decode()
-        print(recv)
-        if not recv == 'hello':
-            self.socket.close()
-            print('connect: handshake failed')
+        self.settimeout(5)
+        try:
+            self.socket.connect(self.host, self.port)
+            recv = self.socket.recv(MAX_BUFF).decode()
+            print(recv)
+            if not recv == 'hello':
+                self.socket.close()
+                self.disconnect_callback()
+                print('connect: handshake failed')
+                return
+
+            self.socket.send(self.nickname.encode())
+        except:
+            self.disconnect_callback()
             return
 
-
-        self.socket.send(self.nickname.encode())
-
-        while True:
+        while self.event.is_set():
             try:
                 message = self.socket.recv(MAX_BUFF).decode()
                 print(message)
@@ -134,17 +147,15 @@ class client:
             except:
                 self.socket.close()
                 print('close socket')
+                self.disconnect_callback()
                 break
 
     def send_message(self, message):
         self.socket.send(f'{message}'.encode())
         print(message)
 
-#    def status(self):
-#        print({self.status})
     def disconnect(self):
-        if self.handle_thread:
-            self.handle_thread.stop()
+        self.client.event.set()
 
 
 class login_frame(ctk.CTkFrame):
